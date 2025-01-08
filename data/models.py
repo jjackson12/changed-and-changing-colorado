@@ -3,6 +3,7 @@ import pandas as pd
 from enum import Enum
 from typing import Dict, List
 from census import Census
+import os
 
 
 class GEOGRAPHY(Enum):
@@ -22,13 +23,9 @@ class DataSet(ABC):
     def collect_data(self, geography_type: GEOGRAPHY, args) -> Dict[str, pd.DataFrame]:
         pass
 
-    @classmethod
-    def create(cls, geography_type: GEOGRAPHY, **args):
-        """Factory method to create and initialize a DataSet instance."""
-        instance = cls()
-        instance.data_tables = instance.collect_data(geography_type, args)
-        instance.variable_list = list(instance.data_tables.keys())
-        return instance
+    def __init__(self, geography_type: GEOGRAPHY, **args):
+        self.data_tables = self.collect_data(geography_type, args)
+        self.variable_list = list(self.data_tables.keys())
 
 
 class PopulationData(DataSet):
@@ -36,19 +33,33 @@ class PopulationData(DataSet):
 
     Args:
         geography_type (GEOGRAPHY): Geographic unit of aggregation
-        args: Dict of additional arguments passed in init for collect_data. For this dataset, this requires year and ACS dataset name.
+        args: Dict of additional arguments passed in init for collect_data. For this dataset, this requires year, ACS dataset name, and census api key.
     """
 
     def collect_data(self, geography_type: GEOGRAPHY, args) -> Dict[str, pd.DataFrame]:
+
         df_dict = {}
 
-        # TODO
-        API_KEY = "YOUR_CENSUS_API_KEY"
+        API_KEY = args["API_KEY"]
         c = Census(API_KEY)
 
-        # TODO
         acs_year = args["year"]
-        acs_dataset = args["dataset"]
+
+        dataset_mappings = {
+            "acs5": c.acs5,
+            "acs3": c.acs3,
+            "acs1": c.acs1,
+            "acs5dp": c.acs5dp,
+            "acs3dp": c.acs3dp,
+            "acs1dp": c.acs1dp,
+            "acs5st": c.acs5st,
+        }
+        dataset = dataset_mappings.get(args["dataset"], None)
+
+        if not dataset:
+            raise Exception(
+                f"invalid argument for dataset {args['dataset']}. Must select from these options: {', '.join(dataset_mappings.keys())}"
+            )
 
         # TODO
         variables = {
@@ -62,12 +73,20 @@ class PopulationData(DataSet):
         # Colorado FIPS code
         state_fips = "08"
 
-        # Query the Census API
-        # FIXME: This isn't actually referencing "acs_dataset" variable
-        results = c.acs5.state_zipcode(
-            ["NAME"] + list(variables.keys()), state_fips, "*"
-        )
-
+        if geography_type == GEOGRAPHY.ZIP5:
+            # TODO: Use Geography var
+            results = dataset.state_zipcode(
+                ["NAME"] + list(variables.keys()), state_fips, "*", year=acs_year
+            )
+        else:
+            if geography_type == GEOGRAPHY.STATE:
+                results = dataset.state(
+                    ["NAME"] + list(variables.keys()), state_fips, year=acs_year
+                )
+            else:
+                raise Exception(
+                    f"Geography type {geography_type} not implemented for Population Census Dataset"
+                )
         df = pd.DataFrame(results)
 
         rename_map = {var: desc for var, desc in variables.items()}
@@ -79,4 +98,11 @@ class PopulationData(DataSet):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        return {"Population by Race": df}
+        return {"Population Demos": df}
+
+
+census_api_key = os.environ["CENSUS_API_KEY"]
+census_data_args = {"API_KEY": census_api_key, "year": 2022, "dataset": "acs5"}
+pop_data = PopulationData(GEOGRAPHY.ZIP5, **census_data_args)
+pop_data_tbls = pop_data.data_tables
+print(pop_data_tbls)
